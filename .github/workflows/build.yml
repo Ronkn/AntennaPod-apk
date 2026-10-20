@@ -1,5 +1,7 @@
 name: Build APK
 on:
+  schedule:
+    - cron: '0 6 * * *'
   workflow_dispatch:
 
 jobs:
@@ -7,24 +9,43 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Check for new upstream release
+        id: check
+        run: |
+          TAG=$(gh release view --repo AntennaPod/AntennaPod --json tagName -q .tagName)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.check.outputs.new == 'true'
+        with:
+          repository: AntennaPod/AntennaPod
+          ref: ${{ steps.check.outputs.tag }}
       - uses: actions/setup-java@v4
+        if: steps.check.outputs.new == 'true'
         with:
           distribution: temurin
           java-version: 17
       - name: Restore signing key
+        if: steps.check.outputs.new == 'true'
         env:
           KEY_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
         run: |
           mkdir -p ~/.android
           echo "$KEY_B64" | base64 -d > ~/.android/debug.keystore
       - name: Build
+        if: steps.check.outputs.new == 'true'
         run: chmod +x gradlew && ./gradlew assembleFreeDebug
       - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
+        if: steps.check.outputs.new == 'true'
         run: |
-          TAG="build-$(date +%Y%m%d-%H%M)-${GITHUB_SHA::7}"
+          TAG="${{ steps.check.outputs.tag }}"
           gh release create "$TAG" $(find app/build/outputs/apk -name '*.apk') \
-            --title "$TAG" --notes "Automated build of $GITHUB_SHA"
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" --notes "Build of upstream AntennaPod $TAG"
