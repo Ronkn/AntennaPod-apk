@@ -37,11 +37,22 @@ jobs:
         env:
           KEY_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
         run: |
+          test -n "$KEY_B64" || { echo "DEBUG_KEYSTORE_B64 secret is empty or missing"; exit 1; }
           mkdir -p ~/.android
           echo "$KEY_B64" | base64 -d > ~/.android/debug.keystore
+          keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey > /dev/null
       - name: Build
         if: steps.check.outputs.new == 'true'
         run: chmod +x gradlew && ./gradlew assembleFreeDebug
+      - name: Sign with saved key
+        if: steps.check.outputs.new == 'true'
+        run: |
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          for APK in $(find app/build/outputs/apk -name '*.apk'); do
+            "$APKSIGNER" sign --ks ~/.android/debug.keystore --ks-pass pass:android --ks-key-alias androiddebugkey --key-pass pass:android "$APK"
+            "$APKSIGNER" verify --print-certs "$APK" | grep SHA-256
+          done
+          keytool -list -v -keystore ~/.android/debug.keystore -storepass android | grep SHA256
       - name: Publish release
         if: steps.check.outputs.new == 'true'
         run: |
